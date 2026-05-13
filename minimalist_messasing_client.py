@@ -6,7 +6,7 @@ import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dataclasses import dataclass
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -21,6 +21,7 @@ SCOPES = ["Mail.Read", "Mail.Send", "User.Read"]
 PERSONAL_ACCOUNT_TENANT = "consumers"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APPROVED_SENDERS_FILE = os.path.join(APP_DIR, "approved_emails.txt")
+EMAIL_LISTS_DIR = os.path.join(APP_DIR, "emaillists")
 TOKEN_CACHE_FILE = os.path.join(APP_DIR, "msal_token_cache.bin")
 
 
@@ -298,7 +299,13 @@ class FocusMailApp:
         ).pack(anchor=tk.W)
         self.senders_var = tk.StringVar()
         ttk.Entry(senders_frame, textvariable=self.senders_var).pack(fill=tk.X, pady=4)
-        ttk.Button(senders_frame, text="Load emails", command=self.load_emails).pack(anchor=tk.E)
+
+        senders_actions = ttk.Frame(senders_frame)
+        senders_actions.pack(fill=tk.X)
+        ttk.Button(senders_actions, text="Browse sender list (.txt)", command=self.load_sender_list_file).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(senders_actions, text="Load emails", command=self.load_emails).pack(side=tk.RIGHT)
 
         mailbox_frame = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
         mailbox_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -395,10 +402,51 @@ class FocusMailApp:
         threading.Thread(target=_auth, daemon=True).start()
 
     def _parse_senders(self) -> list[str]:
-        senders = [s.strip().lower() for s in self.senders_var.get().split(",") if s.strip()]
+        senders = self._dedupe_senders(self.senders_var.get().split(","))
         if not senders:
             raise ValueError("You must enter at least one sender email address.")
         return senders
+
+    @staticmethod
+    def _dedupe_senders(senders: list[str]) -> list[str]:
+        unique_senders = []
+        seen = set()
+        for sender in senders:
+            normalized = sender.strip().lower()
+            if normalized and normalized not in seen:
+                unique_senders.append(normalized)
+                seen.add(normalized)
+        return unique_senders
+
+    def load_sender_list_file(self) -> None:
+        initial_dir = EMAIL_LISTS_DIR if os.path.isdir(EMAIL_LISTS_DIR) else APP_DIR
+        file_path = filedialog.askopenfilename(
+            title="Select sender email list",
+            initialdir=initial_dir,
+            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, encoding="utf-8") as infile:
+                file_senders = [
+                    line.strip()
+                    for line in infile
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+        except OSError as exc:
+            messagebox.showerror("Could not load list", str(exc))
+            return
+
+        if not file_senders:
+            messagebox.showerror("Empty list", "The selected file does not contain any email addresses.")
+            return
+
+        current_senders = [s.strip() for s in self.senders_var.get().split(",") if s.strip()]
+        senders = self._dedupe_senders(current_senders + file_senders)
+        self.senders_var.set(", ".join(senders))
+        self.status_var.set(f"Loaded {len(file_senders)} sender(s) from {os.path.basename(file_path)}.")
 
     def load_emails(self) -> None:
         if not self.client:
