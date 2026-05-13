@@ -219,3 +219,6 @@ __marimo__/
 
 # Email data
 emaillists/
+
+# cache bin
+msal_token_cache.bin
