@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import html
 import os
+import re
 import threading
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 from urllib.parse import quote
@@ -23,6 +25,57 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APPROVED_SENDERS_FILE = os.path.join(APP_DIR, "approved_emails.txt")
 EMAIL_LISTS_DIR = os.path.join(APP_DIR, "emaillists")
 TOKEN_CACHE_FILE = os.path.join(APP_DIR, "msal_token_cache.bin")
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+|mailto:[^\s)]+)\)", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s<]+", re.IGNORECASE)
+TRAILING_URL_PUNCTUATION = ".,;:!?"
+
+
+def _html_link(href: str, label: str) -> str:
+    return f'<a href="{html.escape(href, quote=True)}">{html.escape(label)}</a>'
+
+
+def _auto_link_urls(text: str) -> str:
+    parts = []
+    position = 0
+    for match in URL_RE.finditer(text):
+        parts.append(html.escape(text[position:match.start()]))
+
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in TRAILING_URL_PUNCTUATION:
+            trailing = url[-1] + trailing
+            url = url[:-1]
+
+        parts.append(_html_link(url, url) if url else html.escape(match.group(0)))
+        parts.append(html.escape(trailing))
+        position = match.end()
+
+    parts.append(html.escape(text[position:]))
+    return "".join(parts)
+
+
+def _format_reply_body_as_html(body: str) -> str:
+    normalized = body.strip().replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = re.split(r"\n{2,}", normalized)
+    rendered_paragraphs = []
+
+    for paragraph in paragraphs:
+        parts = []
+        position = 0
+        for match in MARKDOWN_LINK_RE.finditer(paragraph):
+            parts.append(_auto_link_urls(paragraph[position:match.start()]))
+            parts.append(_html_link(match.group(2), match.group(1)))
+            position = match.end()
+
+        parts.append(_auto_link_urls(paragraph[position:]))
+        content = "".join(parts).replace("\n", "<br>")
+        rendered_paragraphs.append(f'<p style="margin:0 0 12px 0;">{content}</p>')
+
+    return (
+        '<html><body style="font-family:Segoe UI, Arial, sans-serif; font-size:14px; line-height:1.45;">'
+        f"{''.join(rendered_paragraphs)}"
+        "</body></html>"
+    )
 
 
 @dataclass
@@ -210,7 +263,14 @@ class GraphClient:
         return items
 
     def reply_to_message(self, message_id: str, body: str) -> None:
-        payload = {"comment": body}
+        payload = {
+            "message": {
+                "body": {
+                    "contentType": "HTML",
+                    "content": _format_reply_body_as_html(body),
+                },
+            },
+        }
 
         response = requests.post(
             f"{GRAPH_BASE_URL}/me/messages/{quote(message_id, safe='')}/reply",
