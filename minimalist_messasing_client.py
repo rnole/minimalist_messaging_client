@@ -209,20 +209,11 @@ class GraphClient:
 
         return items
 
-    def send_email(self, recipient: str, subject: str, body: str) -> None:
-        payload = {
-            "message": {
-                "subject": subject,
-                "body": {"contentType": "Text", "content": body},
-                "toRecipients": [
-                    {"emailAddress": {"address": recipient}},
-                ],
-            },
-            "saveToSentItems": True,
-        }
+    def reply_to_message(self, message_id: str, body: str) -> None:
+        payload = {"comment": body}
 
         response = requests.post(
-            f"{GRAPH_BASE_URL}/me/sendMail",
+            f"{GRAPH_BASE_URL}/me/messages/{quote(message_id, safe='')}/reply",
             headers=self._headers(),
             json=payload,
             timeout=20,
@@ -326,9 +317,9 @@ class FocusMailApp:
         self.preview = tk.Text(right, height=12, wrap=tk.WORD)
         self.preview.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(right, text="Reply subject").pack(anchor=tk.W, pady=(8, 0))
+        ttk.Label(right, text="Reply subject (Outlook thread)").pack(anchor=tk.W, pady=(8, 0))
         self.reply_subject = tk.StringVar()
-        ttk.Entry(right, textvariable=self.reply_subject).pack(fill=tk.X)
+        ttk.Entry(right, textvariable=self.reply_subject, state="readonly").pack(fill=tk.X)
 
         ttk.Label(right, text="Reply body").pack(anchor=tk.W, pady=(6, 0))
         self.reply_body = tk.Text(right, height=8, wrap=tk.WORD)
@@ -517,17 +508,16 @@ class FocusMailApp:
             messagebox.showerror("Recipient blocked", "You can only send replies to the allowed senders list.")
             return
 
-        subject = self.reply_subject.get().strip()
         body = self.reply_body.get("1.0", tk.END).strip()
-        if not subject or not body:
-            messagebox.showerror("Missing content", "Reply subject and body are required.")
+        if not body:
+            messagebox.showerror("Missing content", "Reply body is required.")
             return
 
         self.status_var.set("Sending reply...")
 
         def _send() -> None:
             try:
-                self.client.send_email(recipient, subject, body)
+                self.client.reply_to_message(selected.message_id, body)
                 self.root.after(0, lambda: messagebox.showinfo("Sent", "Reply sent successfully."))
                 self.root.after(0, lambda: self.status_var.set("Reply sent."))
             except Exception as exc:  # noqa: BLE001
