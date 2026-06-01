@@ -222,3 +222,8 @@ emaillists/
 
 # cache bin
 msal_token_cache.bin
+
+# inno installer
+*.iss
+
+installer/*
